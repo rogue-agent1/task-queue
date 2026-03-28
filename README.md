@@ -1,6 +1,11 @@
 # task-queue
-In-memory priority task queue. Zero dependencies.
+
+Distributed task queue with workers over TCP
+
 ## Usage
+
 ```bash
-python3 task_queue.py
+python3 task_queue.py --help
 ```
+
+Zero dependencies. Python 3.8+.
