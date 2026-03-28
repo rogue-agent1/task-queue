@@ -1,11 +1,13 @@
-# task-queue
+# Task Queue
 
-Distributed task queue with workers over TCP
+In-memory task queue with priorities and retries.
 
 ## Usage
 
 ```bash
-python3 task_queue.py --help
+python3 task_queue.py
 ```
 
-Zero dependencies. Python 3.8+.
+## License
+
+MIT

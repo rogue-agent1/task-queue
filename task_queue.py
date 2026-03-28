@@ -1,59 +1,43 @@
 #!/usr/bin/env python3
-"""task_queue - Distributed task queue."""
-import argparse, socket, threading, json, time, queue, sys, uuid
-
+"""In-memory task queue with priorities and retries."""
+import time,heapq,threading,json
+class Task:
+    def __init__(self,id,fn,args=(),priority=0,max_retries=3):
+        self.id=id;self.fn=fn;self.args=args;self.priority=priority
+        self.max_retries=max_retries;self.retries=0;self.status="pending"
+        self.result=None;self.error=None;self.created=time.time()
+    def __lt__(self,o): return self.priority<o.priority
 class TaskQueue:
     def __init__(self):
-        self.pending = queue.Queue(); self.results = {}; self.lock = threading.Lock()
-    def submit(self, task):
-        tid = str(uuid.uuid4())[:8]
-        self.pending.put({"id":tid, "task":task, "submitted":time.time()})
-        return tid
-    def get_task(self, timeout=5):
-        try: return self.pending.get(timeout=timeout)
-        except queue.Empty: return None
-    def complete(self, tid, result):
-        with self.lock: self.results[tid] = {"result":result, "completed":time.time()}
-    def status(self, tid):
-        with self.lock: return self.results.get(tid)
-
-def handle(client, tq):
-    try:
-        buf = ""
-        while True:
-            data = client.recv(4096)
-            if not data: break
-            buf += data.decode()
-            while "\n" in buf:
-                line, buf = buf.split("\n", 1)
-                msg = json.loads(line)
-                cmd = msg.get("cmd")
-                if cmd == "submit":
-                    tid = tq.submit(msg["task"])
-                    client.sendall(json.dumps({"id":tid}).encode()+b"\n")
-                elif cmd == "fetch":
-                    task = tq.get_task(timeout=1)
-                    client.sendall(json.dumps({"task":task}).encode()+b"\n")
-                elif cmd == "complete":
-                    tq.complete(msg["id"], msg["result"])
-                    client.sendall(b'{"ok":true}\n')
-                elif cmd == "status":
-                    r = tq.status(msg["id"])
-                    client.sendall(json.dumps({"status":r}).encode()+b"\n")
-    except: pass
-    client.close()
-
-def main():
-    p = argparse.ArgumentParser(description="Task queue")
-    p.add_argument("-p","--port",type=int,default=9091)
-    a = p.parse_args()
-    tq = TaskQueue()
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("0.0.0.0", a.port)); srv.listen(50)
-    print(f"Task queue on :{a.port}")
-    while True:
-        c, _ = srv.accept()
-        threading.Thread(target=handle, args=(c, tq), daemon=True).start()
-
-if __name__ == "__main__": main()
+        self.queue=[];self.tasks={};self.lock=threading.Lock()
+    def submit(self,id,fn,args=(),priority=0,max_retries=3):
+        task=Task(id,fn,args,priority,max_retries)
+        with self.lock: heapq.heappush(self.queue,task);self.tasks[id]=task
+        return task
+    def process_one(self):
+        with self.lock:
+            if not self.queue: return None
+            task=heapq.heappop(self.queue)
+        task.status="running"
+        try: task.result=task.fn(*task.args);task.status="done"
+        except Exception as e:
+            task.retries+=1;task.error=str(e)
+            if task.retries<task.max_retries:
+                task.status="pending"
+                with self.lock: heapq.heappush(self.queue,task)
+            else: task.status="failed"
+        return task
+    def process_all(self):
+        results=[]
+        while self.queue: r=self.process_one();
+        return [t for t in self.tasks.values()]
+    def status(self):
+        return {s:sum(1 for t in self.tasks.values() if t.status==s) for s in ["pending","running","done","failed"]}
+if __name__=="__main__":
+    q=TaskQueue()
+    q.submit("a",lambda x:x*2,args=(5,),priority=1)
+    q.submit("b",lambda x:x+1,args=(10,),priority=0)
+    q.submit("c",lambda:1/0,priority=2,max_retries=2)
+    q.process_all()
+    assert q.tasks["a"].result==10;assert q.tasks["b"].result==11;assert q.tasks["c"].status=="failed"
+    print(f"Queue status: {q.status()}"); print("Task queue OK")
