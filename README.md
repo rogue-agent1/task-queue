@@ -1,11 +1,17 @@
-# task-queue
+# task_queue
 
-Priority task queue with retry, timeout, and dead letter.
+Priority task queue with scheduling and deadlines
+
+Single-file, zero-dependency Python CLI tool.
 
 ## Usage
 
 ```bash
-python3 task_queue.py test
+python task_queue.py --help
 ```
 
-Zero dependencies. Python 3.8+.
+## Test
+
+```bash
+python -c "import task_queue; task_queue.test()"
+```
