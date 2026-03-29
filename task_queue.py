@@ -1,43 +1,56 @@
 #!/usr/bin/env python3
-"""In-memory task queue with priorities and retries."""
-import time,heapq,threading,json
-class Task:
-    def __init__(self,id,fn,args=(),priority=0,max_retries=3):
-        self.id=id;self.fn=fn;self.args=args;self.priority=priority
-        self.max_retries=max_retries;self.retries=0;self.status="pending"
-        self.result=None;self.error=None;self.created=time.time()
-    def __lt__(self,o): return self.priority<o.priority
+"""task_queue - Priority task queue with worker pool."""
+import argparse, threading, time, heapq, json, random
+
 class TaskQueue:
-    def __init__(self):
-        self.queue=[];self.tasks={};self.lock=threading.Lock()
-    def submit(self,id,fn,args=(),priority=0,max_retries=3):
-        task=Task(id,fn,args,priority,max_retries)
-        with self.lock: heapq.heappush(self.queue,task);self.tasks[id]=task
-        return task
-    def process_one(self):
+    def __init__(self, workers=4):
+        self.queue = []; self.lock = threading.Lock(); self.workers = workers
+        self.results = {}; self.task_id = 0; self.running = True
+
+    def submit(self, func, args=(), priority=0):
         with self.lock:
-            if not self.queue: return None
-            task=heapq.heappop(self.queue)
-        task.status="running"
-        try: task.result=task.fn(*task.args);task.status="done"
-        except Exception as e:
-            task.retries+=1;task.error=str(e)
-            if task.retries<task.max_retries:
-                task.status="pending"
-                with self.lock: heapq.heappush(self.queue,task)
-            else: task.status="failed"
-        return task
-    def process_all(self):
-        results=[]
-        while self.queue: r=self.process_one();
-        return [t for t in self.tasks.values()]
-    def status(self):
-        return {s:sum(1 for t in self.tasks.values() if t.status==s) for s in ["pending","running","done","failed"]}
-if __name__=="__main__":
-    q=TaskQueue()
-    q.submit("a",lambda x:x*2,args=(5,),priority=1)
-    q.submit("b",lambda x:x+1,args=(10,),priority=0)
-    q.submit("c",lambda:1/0,priority=2,max_retries=2)
-    q.process_all()
-    assert q.tasks["a"].result==10;assert q.tasks["b"].result==11;assert q.tasks["c"].status=="failed"
-    print(f"Queue status: {q.status()}"); print("Task queue OK")
+            self.task_id += 1
+            heapq.heappush(self.queue, (priority, self.task_id, func, args))
+            return self.task_id
+
+    def worker(self):
+        while self.running:
+            task = None
+            with self.lock:
+                if self.queue: task = heapq.heappop(self.queue)
+            if task:
+                priority, tid, func, args = task
+                try:
+                    result = func(*args)
+                    self.results[tid] = {"status": "done", "result": result}
+                except Exception as e:
+                    self.results[tid] = {"status": "error", "error": str(e)}
+            else:
+                time.sleep(0.01)
+
+    def run(self):
+        threads = [threading.Thread(target=self.worker, daemon=True) for _ in range(self.workers)]
+        for t in threads: t.start()
+        return threads
+
+    def stop(self): self.running = False
+
+def main():
+    p = argparse.ArgumentParser(description="Task queue demo")
+    p.add_argument("-w", "--workers", type=int, default=4)
+    p.add_argument("-n", "--tasks", type=int, default=20)
+    args = p.parse_args()
+    tq = TaskQueue(args.workers)
+    def work(n):
+        time.sleep(random.uniform(0.01, 0.1))
+        return n * n
+    for i in range(args.tasks):
+        tq.submit(work, (i,), priority=random.randint(0, 5))
+    threads = tq.run()
+    time.sleep(2); tq.stop()
+    completed = sum(1 for r in tq.results.values() if r["status"] == "done")
+    print(f"Completed {completed}/{args.tasks} tasks with {args.workers} workers")
+    print(json.dumps(dict(list(tq.results.items())[:5]), indent=2))
+
+if __name__ == "__main__":
+    main()
