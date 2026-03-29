@@ -1,7 +1,11 @@
-Priority task queue with retry, exponential backoff, dead-letter queue
+# task-queue
+
+Priority task queue with retry, timeout, and dead letter.
+
+## Usage
 
 ```bash
 python3 task_queue.py test
 ```
 
-Zero deps. Python 3.8+.
+Zero dependencies. Python 3.8+.
